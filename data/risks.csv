@@ -1,0 +1,6 @@
+risk_id,category,description,probability,impact,severity,owner,mitigation,status
+R01,Utilities,Unmarked or mislocated underground utilities encountered during excavation,High,High,High,Project Engineer,Add exploratory potholing and maintain standby utility crew,Open
+R02,Procurement,Long lead time on fabricated steel canopy members,Medium,High,High,Procurement Lead,Confirm fabrication hold points and approve alternates early,Mitigating
+R03,Weather,Heavy rain disrupting excavation and drainage work,High,Medium,High,Superintendent,Resequence drainage work and protect work fronts,Open
+R04,Stakeholder,Late owner design comments on plaza finishes and wayfinding,Medium,Medium,Medium,Design Manager,Weekly review checkpoint with owner team,Mitigating
+R05,Safety,Pedestrian and transit rider interface with active work zones,Low,High,Medium,Safety Manager,Refresh barriers and add morning spotter coverage,Open

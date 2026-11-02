@@ -1,0 +1,14 @@
+{
+  "project_name": "Riverside Mobility Hub",
+  "project_type": "Transit plaza renovation and utility relocation",
+  "owner": "Metro East Transit Authority",
+  "contractor": "Hudson Civil + Build",
+  "location": "Yonkers, NY",
+  "baseline_start": "2026-01-05",
+  "baseline_finish": "2026-12-18",
+  "status_date": "2026-08-31",
+  "contract_value_usd": 18500000,
+  "approved_change_orders_usd": 1075000,
+  "contingency_usd": 750000,
+  "reporting_currency": "USD"
+}

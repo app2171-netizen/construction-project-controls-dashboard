@@ -1,0 +1,16 @@
+reporting_date,discipline,planned_progress_pct,actual_progress_pct
+2026-06-30,Architectural,10,5
+2026-06-30,Structures,60,52
+2026-06-30,Electrical,30,24
+2026-06-30,Civil,58,52
+2026-06-30,Utilities,100,100
+2026-07-31,Architectural,25,14
+2026-07-31,Structures,80,68
+2026-07-31,Electrical,52,42
+2026-07-31,Civil,72,64
+2026-07-31,Utilities,100,100
+2026-08-31,Architectural,46,28
+2026-08-31,Structures,92,82
+2026-08-31,Electrical,74,64
+2026-08-31,Civil,84,76
+2026-08-31,Utilities,100,100
