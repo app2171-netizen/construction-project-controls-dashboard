@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from html import escape
@@ -39,6 +40,12 @@ def currency(value: float) -> str:
     return f"${value:,.0f}"
 
 
+def signed_currency(value: float) -> str:
+    """Currency with an explicit sign, e.g. +$1,205,000 / -$3,615,000."""
+    sign = "+" if value > 0 else ("-" if value < 0 else "")
+    return f"{sign}${abs(value):,.0f}"
+
+
 def pct(value: float, digits: int = 0) -> str:
     return f"{value:.{digits}f}%"
 
@@ -50,6 +57,18 @@ def days_text(value: int) -> str:
     if value > 0:
         return f"{value} {noun} late"
     return f"{abs(value)} {noun} early"
+
+
+def nice_max(value: float, ticks: int = 4) -> float:
+    """Round the axis maximum up so each of the `ticks` gridlines lands on a clean number."""
+    if value <= 0:
+        return 1
+    raw = value / ticks
+    magnitude = 10 ** math.floor(math.log10(raw))
+    for step in (1, 2, 2.5, 5, 10):
+        if step * magnitude >= raw:
+            return step * magnitude * ticks
+    return 10 * magnitude * ticks
 
 
 def metric_card(label: str, value: str, sublabel: str, tone: str = "default") -> str:
@@ -90,10 +109,10 @@ def svg_bar_chart(
     if not items:
         return '<div class="empty-state">No data available.</div>'
 
-    margin = {"top": 24, "right": 20, "bottom": 72, "left": 56}
+    margin = {"top": 28, "right": 20, "bottom": 44, "left": 56}
     plot_w = width - margin["left"] - margin["right"]
     plot_h = height - margin["top"] - margin["bottom"]
-    max_value = max(v for _, v in items) or 1
+    max_value = nice_max(max(v for _, v in items))
     bar_w = plot_w / max(len(items), 1) * 0.62
     gap = plot_w / max(len(items), 1) * 0.38
 
@@ -124,10 +143,10 @@ def svg_bar_chart(
             f'<text x="{x + bar_w / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" class="value-label">'
             f"{escape(value_formatter(value))}</text>"
         )
+        # Horizontal category labels (the rotated version ran off the bottom of the SVG)
         parts.append(
-            f'<text x="{x + bar_w / 2:.1f}" y="{height - 22}" text-anchor="end" '
-            f'transform="rotate(-35 {x + bar_w / 2:.1f} {height - 22})" class="axis-label">'
-            f"{escape(label)}</text>"
+            f'<text x="{x + bar_w / 2:.1f}" y="{margin["top"] + plot_h + 22}" text-anchor="middle" '
+            f'class="axis-label">{escape(label)}</text>'
         )
 
     parts.append("</svg>")
@@ -147,9 +166,9 @@ def svg_multi_line_chart(
     margin = {"top": 24, "right": 24, "bottom": 56, "left": 64}
     plot_w = width - margin["left"] - margin["right"]
     plot_h = height - margin["top"] - margin["bottom"]
-    all_values = [v for _, values, _ in series for v in values]
+    all_values = [v for _, values, _ in series for v in values if v is not None]
     max_value = max(all_values) if all_values else 1
-    max_value = max_value or 1
+    max_value = nice_max(max_value)
     step_x = plot_w / max(len(labels) - 1, 1)
 
     parts = [
@@ -175,22 +194,25 @@ def svg_multi_line_chart(
         )
 
     for name, values, color in series:
+        # Months with no data (None) are skipped, so actuals stop at the status date
+        # instead of dropping to zero.
         points = []
         for idx, value in enumerate(values):
+            if value is None:
+                continue
             x = margin["left"] + idx * step_x
             y = margin["top"] + plot_h - (plot_h * value / max_value)
-            points.append((x, y, value))
+            points.append((x, y, value, labels[idx]))
         path = " ".join(
-            ("M" if idx == 0 else "L") + f" {x:.1f} {y:.1f}" for idx, (x, y, _) in enumerate(points)
+            ("M" if idx == 0 else "L") + f" {x:.1f} {y:.1f}" for idx, (x, y, _, _) in enumerate(points)
         )
         parts.append(
-            f'<path d="{path}" fill="none" stroke="{color}" stroke-width="3.5" stroke-linecap="round" />'
+            f'<path d="{path}" fill="none" stroke="{color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
         )
-        for x, y, value in points:
-            parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="{color}" />')
+        for x, y, value, label in points:
             parts.append(
-                f'<text x="{x:.1f}" y="{y - 10:.1f}" text-anchor="middle" class="value-label">'
-                f"{escape(value_formatter(value))}</text>"
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{color}">'
+                f"<title>{escape(name)} · {escape(label)}: {escape(value_formatter(value))}</title></circle>"
             )
 
     legend = "".join(
@@ -205,7 +227,13 @@ def table(headers: list[str], rows: list[list[str]]) -> str:
     head = "".join(f"<th>{escape(h)}</th>" for h in headers)
     body_rows = []
     for row in rows:
-        body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
+        cells = []
+        for cell in row:
+            # keep ISO dates and short numeric values on one line
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}|[-+$\d,.%]+( (days|pts|hrs))?( late| early)?", str(cell)):
+                cell = f'<span class="nowrap">{cell}</span>'
+            cells.append(f"<td>{cell}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
     if not body_rows:
         body_rows.append('<tr><td colspan="99" class="muted">No rows to display.</td></tr>')
     return f"""
@@ -252,10 +280,17 @@ def render() -> str:
     forecast_project_finish = max(row["forecast_finish_dt"] for row in schedule if row["forecast_finish_dt"])
     project_slip_days = (forecast_project_finish - baseline_finish).days if baseline_finish else 0
 
-    actual_cost_to_date = sum(float(row["actual_cost_usd"]) for row in cash_flow)
-    planned_cost_to_date = sum(float(row["planned_cost_usd"]) for row in cash_flow)
+    # FIX: compare like with like. Planned, actual and paid are summed only through the
+    # status month. (The first version summed planned cost for all 12 months against
+    # 8 months of actuals, which made an over-budget project look 17% under budget.)
+    status_month = status_date.replace(day=1)
+    to_date = [row for row in cash_flow if parse_month(row["month"]) <= status_month]
+    actual_cost_to_date = sum(float(row["actual_cost_usd"]) for row in to_date)
+    planned_cost_to_date = sum(float(row["planned_cost_usd"]) for row in to_date)
+    invoice_paid_to_date = sum(float(row["invoice_paid_usd"]) for row in to_date)
+    # Commitments and total plan cover the full cash flow horizon (budget at completion).
+    planned_cost_total = sum(float(row["planned_cost_usd"]) for row in cash_flow)
     committed_cost_to_date = sum(float(row["committed_cost_usd"]) for row in cash_flow)
-    invoice_paid_to_date = sum(float(row["invoice_paid_usd"]) for row in cash_flow)
 
     approved_changes = [row for row in changes if row["status"].strip().lower() == "approved"]
     pending_changes = [row for row in changes if row["status"].strip().lower() == "pending"]
@@ -285,8 +320,12 @@ def render() -> str:
     severe_delays = [row for row in delayed_tasks if row["slip_days"] >= 14]
     cost_overrun = actual_cost_to_date - planned_cost_to_date
     cost_overrun_pct = (cost_overrun / planned_cost_to_date * 100) if planned_cost_to_date else 0
-    committed_overrun = committed_cost_to_date - planned_cost_to_date
-    committed_overrun_pct = (committed_overrun / planned_cost_to_date * 100) if planned_cost_to_date else 0
+    committed_overrun = committed_cost_to_date - planned_cost_total
+    committed_overrun_pct = (committed_overrun / planned_cost_total * 100) if planned_cost_total else 0
+    over_budget = cost_overrun > 0 or committed_overrun > 0
+    log_change_total = approved_change_value
+    metadata_change_total = float(metadata["approved_change_orders_usd"])
+    change_mismatch = metadata_change_total - log_change_total
 
     milestones = sorted(
         [row for row in schedule if row["is_critical"]],
@@ -299,9 +338,12 @@ def render() -> str:
 
     cost_labels = [parse_month(row["month"]).strftime("%b") for row in cash_flow]
     planned_series = [float(row["planned_cost_usd"]) / 1_000_000 for row in cash_flow]
-    actual_series = [float(row["actual_cost_usd"]) / 1_000_000 for row in cash_flow]
+    def upto_status(row, key):
+        return float(row[key]) / 1_000_000 if parse_month(row["month"]) <= status_month else None
+
+    actual_series = [upto_status(row, "actual_cost_usd") for row in cash_flow]
     committed_series = [float(row["committed_cost_usd"]) / 1_000_000 for row in cash_flow]
-    paid_series = [float(row["invoice_paid_usd"]) / 1_000_000 for row in cash_flow]
+    paid_series = [upto_status(row, "invoice_paid_usd") for row in cash_flow]
 
     pending_age_rows = []
     for row in pending_changes:
@@ -346,9 +388,11 @@ def render() -> str:
           <strong>{pct(weighted_plan, 1)}</strong>. The latest forecast finish is
           <strong>{forecast_project_finish.strftime("%b %d, %Y")}</strong>, which is
           <strong>{days_text(project_slip_days)}</strong> relative to baseline.
-          Actual spend is <strong>{currency(actual_cost_to_date)}</strong>, or
+          Actual spend through the status date is <strong>{currency(actual_cost_to_date)}</strong>, or
           <strong>{currency(abs(cost_overrun))}</strong> ({pct(abs(cost_overrun_pct), 1)})
-          {"over" if cost_overrun > 0 else "under"} plan through the loaded months.
+          {"over" if cost_overrun > 0 else "under"} the planned {currency(planned_cost_to_date)}.
+          Total commitments of <strong>{currency(committed_cost_to_date)}</strong> are
+          {currency(abs(committed_overrun))} {"above" if committed_overrun > 0 else "below"} the total planned budget.
         </p>
       </div>
       <div class="summary-alerts">
@@ -357,10 +401,10 @@ def render() -> str:
           <div class="alert-value">{len(delayed_tasks)}</div>
           <div class="alert-sub">{len(severe_delays)} with slips of 14 days or more</div>
         </div>
-        <div class="alert-card {'alert-danger' if cost_overrun > 0 else 'alert-good'}">
-          <div class="alert-title">Cost Position</div>
-          <div class="alert-value">{currency(abs(committed_overrun if committed_overrun > 0 else cost_overrun))}</div>
-          <div class="alert-sub">{"Committed cost above plan" if committed_overrun > 0 else ("Over plan" if cost_overrun > 0 else "Under plan through loaded months")}</div>
+        <div class="alert-card {'alert-danger' if over_budget else 'alert-good'}">
+          <div class="alert-title">Cost Position (to date)</div>
+          <div class="alert-value">{signed_currency(cost_overrun)}</div>
+          <div class="alert-sub">{pct(abs(cost_overrun_pct), 1)} {"over" if cost_overrun > 0 else "under"} plan through {status_date.strftime("%b %Y")}</div>
         </div>
       </div>
     </section>
@@ -447,11 +491,11 @@ def render() -> str:
     )
 
     cost_cards = f"""
-    <div class="metrics-grid tight">
-      {metric_card("Planned Spend", currency(planned_cost_to_date), "Cumulative through loaded months")}
-      {metric_card("Actual Spend", currency(actual_cost_to_date), f"{currency(actual_cost_to_date - planned_cost_to_date)} vs plan", "warn" if actual_cost_to_date > planned_cost_to_date else "good")}
-      {metric_card("Committed Spend", currency(committed_cost_to_date), f"{currency(committed_cost_to_date - actual_cost_to_date)} above actual")}
-      {metric_card("Invoices Paid", currency(invoice_paid_to_date), f"{currency(actual_cost_to_date - invoice_paid_to_date)} not yet paid")}
+    <div class="metrics-grid tight four">
+      {metric_card("Planned To Date", currency(planned_cost_to_date), f"Through {status_date.strftime('%b %Y')} · {currency(planned_cost_total)} total plan")}
+      {metric_card("Actual To Date", currency(actual_cost_to_date), f"{signed_currency(cost_overrun)} vs plan", "warn" if cost_overrun > 0 else "good")}
+      {metric_card("Total Committed", currency(committed_cost_to_date), f"{signed_currency(committed_overrun)} vs total plan", "warn" if committed_overrun > 0 else "good")}
+      {metric_card("Invoices Paid", currency(invoice_paid_to_date), f"{currency(actual_cost_to_date - invoice_paid_to_date)} incurred, not yet paid")}
     </div>
     """
     cost_chart = svg_multi_line_chart(
@@ -466,13 +510,13 @@ def render() -> str:
     )
 
     overspend_callout = f"""
-    <div class="overspend-callout {'danger' if committed_overrun > 0 or cost_overrun > 0 else 'good'}">
+    <div class="overspend-callout {'danger' if over_budget else 'good'}">
       <div>
         <div class="overspend-label">Budget Status</div>
-        <div class="overspend-value">{currency(abs(committed_overrun if committed_overrun > 0 else cost_overrun))} {"Committed Over" if committed_overrun > 0 else ("Over" if cost_overrun > 0 else "Under")} Plan</div>
+        <div class="overspend-value">{currency(abs(cost_overrun))} {"Over" if cost_overrun > 0 else "Under"} Plan To Date</div>
       </div>
       <div class="overspend-sub">
-        Actual spend is {pct(abs(cost_overrun_pct), 1)} {"above" if cost_overrun > 0 else "below"} plan, while committed spend is {pct(abs(committed_overrun_pct), 1)} {"above" if committed_overrun > 0 else "below"} plan.
+        Actual spend is {pct(abs(cost_overrun_pct), 1)} {"above" if cost_overrun > 0 else "below"} plan through the status date, and total commitments are {pct(abs(committed_overrun_pct), 1)} {"above" if committed_overrun > 0 else "below"} the total planned budget.
       </div>
     </div>
     """
@@ -481,7 +525,7 @@ def render() -> str:
     <div class="metrics-grid tight">
       {metric_card("Approved COs", str(len(approved_changes)), currency(approved_change_value))}
       {metric_card("Pending COs", str(len(pending_changes)), currency(pending_change_value), "warn" if pending_changes else "good")}
-      {metric_card("Metadata Check", currency(metadata['approved_change_orders_usd']), "Approved change total in project metadata")}
+      {metric_card("Metadata Check", "Mismatch" if change_mismatch else "Reconciled", f"Metadata {currency(metadata_change_total)} vs CO log {currency(log_change_total)}" + (f" ({signed_currency(change_mismatch)})" if change_mismatch else ""), "warn" if change_mismatch else "good")}
     </div>
     """
     change_status_chart = svg_bar_chart(
@@ -660,6 +704,9 @@ def render() -> str:
       grid-template-columns: repeat(3, minmax(0, 1fr));
       margin-top: 0;
     }}
+    .metrics-grid.tight.four {{
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }}
     .metric-card {{
       padding: 22px 20px 18px;
       border-radius: 20px;
@@ -760,6 +807,10 @@ def render() -> str:
       gap: 22px;
       align-items: start;
     }}
+    .split.wide-left {{
+      grid-template-columns: 1fr;
+      margin-top: 18px;
+    }}
     .subpanel {{
       padding: 22px;
       border-radius: 20px;
@@ -769,6 +820,9 @@ def render() -> str:
     .subpanel h3 {{
       margin: 0 0 14px;
       font-size: 1.05rem;
+    }}
+    .split > *, .metrics-grid > *, .summary-band > * {{
+      min-width: 0;
     }}
     .chart-svg {{
       width: 100%;
@@ -814,10 +868,14 @@ def render() -> str:
     table {{
       width: 100%;
       border-collapse: collapse;
-      min-width: 640px;
+      min-width: 0;
+    }}
+    .nowrap {{
+      white-space: nowrap;
     }}
     th, td {{
-      padding: 14px 16px;
+      padding: 11px 12px;
+      font-size: 0.92rem;
       text-align: left;
       border-bottom: 1px solid rgba(15, 23, 42, 0.08);
       vertical-align: top;
@@ -911,7 +969,9 @@ def render() -> str:
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
       .metrics-grid.tight,
+      .metrics-grid.tight.four,
       .split,
+      .split.wide-left,
       .summary-band,
       .hero {{
         grid-template-columns: 1fr;
@@ -960,7 +1020,7 @@ def render() -> str:
         "Schedule View",
         "Critical path health, delayed work, milestone movement, and discipline-level progress.",
         critical_status
-        + '<div class="split">'
+        + '<div class="split wide-left">'
         + f'<div class="subpanel"><h3>Delayed Tasks</h3><div class="caption">Tasks where forecast finish is later than baseline finish.</div>{table(["Task", "Activity", "Discipline", "Status", "Baseline Finish", "Forecast Finish", "Slip"], delayed_rows)}</div>'
         + f'<div class="subpanel"><h3>Milestone Slippage</h3><div class="caption">Latest critical-path milestones and their current finish movement.</div>{table(["Task", "Milestone", "Baseline Finish", "Forecast Finish", "Slip"], milestone_rows)}</div>'
         + '</div>'
@@ -974,7 +1034,7 @@ def render() -> str:
         "Monthly spend, commitment exposure, and payment progress from the loaded cash flow file.",
         cost_cards
         + overspend_callout
-        + f'<div class="subpanel" style="margin-top:22px"><h3>Monthly Cost Trend</h3><div class="caption">All values shown in millions of dollars.</div>{cost_chart}</div>'
+        + f'<div class="subpanel" style="margin-top:22px"><h3>Monthly Cost Trend</h3><div class="caption">Monthly values in millions of dollars. Actual and paid lines stop at the status date; hover a point for its value.</div>{cost_chart}</div>'
     )}
     {section(
         "Change View",
@@ -993,7 +1053,7 @@ def render() -> str:
         + f'<div class="subpanel"><h3>Risk Severity Mix</h3><div class="caption">Count of risks by overall severity rating.</div>{severity_chart}</div>'
         + f'<div class="subpanel"><h3>Weather Lost Hours</h3><div class="caption">Logged productive hours lost by month.</div>{weather_chart}</div>'
         + '</div>'
-        + '<div class="split" style="margin-top:18px">'
+        + '<div class="split wide-left">'
         + f'<div class="subpanel"><h3>Mitigation Ownership</h3><div class="caption">Risk counts by assigned owner.</div>{table(["Owner", "Assigned Risks"], owner_rows)}</div>'
         + f'<div class="subpanel"><h3>Risk Register Snapshot</h3><div class="caption">Current risk details from the source register.</div>{table(["Risk", "Category", "Severity", "Owner", "Status", "Mitigation"], risk_rows)}</div>'
         + '</div>'
